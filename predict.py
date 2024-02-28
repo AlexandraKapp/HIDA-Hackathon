@@ -39,7 +39,7 @@ def predict(hyperparameters: argparse.Namespace):
     print(f'Training on {device}')
 
     # set up the dataset
-    drone_images = DroneImages(hyperparameters.root, True)
+    drone_images = DroneImages(hyperparameters.root)
     test_data = drone_images
 
     # initialize the U-Net model

@@ -5,11 +5,13 @@ import random
 
 import numpy as np
 import torch
+from torch import nn
 import torch.optim
 import torch.utils.data
 
 from dataset import DroneImages
 from model import MaskRCNN
+from model_deeplab import DeepLabV3
 from tqdm import tqdm
 from torchmetrics import JaccardIndex
 
@@ -24,12 +26,17 @@ def instance_to_semantic_mask(pred, target):
 
     return pred_mask, target_mask
 
+def instance_to_semantic_mask_deeplab(pred, target): 
+    pred_mask = pred.argmax(dim=1)
+    return pred_mask, target
 
 def get_device() -> torch.device:
     return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 def train(hyperparameters: argparse.Namespace):
+    deeplab = False
+
     # set fixed seeds for reproducible execution
     random.seed(hyperparameters.seed)
     np.random.seed(hyperparameters.seed)
@@ -41,14 +48,21 @@ def train(hyperparameters: argparse.Namespace):
 
     # set up the dataset
     drone_images = DroneImages(hyperparameters.root)
+
     train_data, test_data = torch.utils.data.random_split(drone_images, [0.8, 0.2])
 
     # initialize MaskRCNN model
-    model = MaskRCNN()
+    if deeplab:
+        model = DeepLabV3()
+    else:
+        model=MaskRCNN()
+        #model = MaskRCNN(image_mean= [130.0, 135.0, 135.0, 118.0, 118.0], 
+        #image_std= [44.0, 40.0, 40.0, 30.0, 21.0])
     model.to(device)
 
     # set up optimization procedure
-    optimizer = torch.optim.Adam(model.parameters(), lr=hyperparameters.lr)
+    #optimizer = torch.optim.Adam(model.parameters(), lr=hyperparameters.lr)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=hyperparameters.lr)
     best_iou = 0.
 
     # start the actual training procedure
@@ -69,11 +83,25 @@ def train(hyperparameters: argparse.Namespace):
 
         for i, batch in enumerate(tqdm(train_loader, desc='train')):
             x, label = batch
-            x = list(image.to(device) for image in x)
-            label = [{k: v.to(device) for k, v in l.items()} for l in label]
-            model.zero_grad()
-            losses = model(x, label)
-            loss = sum(l for l in losses.values())
+
+            if deeplab: #2900x3000
+                x=torch.stack(x, dim=0).to(device)[:,:,:256,:1200]
+                label = [{k: v.to(device) for k, v in l.items()} for l in label]
+                label = torch.stack([p['masks'].sum(dim=0).squeeze() for p in label]).long()
+                
+                label = label [:, :256, :1200]   # [batch_size, width, height]
+                label = label.to(device)
+                model.zero_grad()
+            
+                outputs = model(x)
+                loss = nn.CrossEntropyLoss()(outputs['out'], label)
+
+            else:
+                x = list(image.to(device) for image in x)
+                label = [{k: v.to(device) for k, v in l.items()} for l in label]
+                model.zero_grad()
+                losses = model(x, label)
+                loss = sum(l for l in losses.values())
 
             loss.backward()
             optimizer.step()
@@ -84,7 +112,10 @@ def train(hyperparameters: argparse.Namespace):
                 model.eval()
                 train_predictions = model(x)
 
-                train_metric(*instance_to_semantic_mask(train_predictions, label))
+                if deeplab:
+                    train_metric(*instance_to_semantic_mask_deeplab(train_predictions['out'], label))
+                else:
+                    train_metric(*instance_to_semantic_mask(train_predictions, label))
                 model.train()
 
         train_loss /= len(train_loader)
