@@ -99,8 +99,11 @@ def train(hyperparameters: argparse.Namespace):
 
     # set up the dataset
     drone_images = DroneImages(hyperparameters.root)
+    #ids = drone_images.indices
+    train_data_length = int(len(drone_images) * 0.8)
 
-    train_data, test_data = torch.utils.data.random_split(drone_images, [0.8, 0.2])
+    train_data = torch.utils.data.Subset(drone_images, list(range(0, train_data_length)))
+    test_data = torch.utils.data.Subset(drone_images, list(range(train_data_length, len(drone_images))))
 
     # initialize MaskRCNN model
     if deeplab:
