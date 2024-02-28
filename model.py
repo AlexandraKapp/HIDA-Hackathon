@@ -10,7 +10,8 @@ def MaskRCNN(in_channels=5):
     # if image_std is None:
     #     image_std = [0.229, 0.224, 0.225, 0.225, 0.225]
     model = maskrcnn_resnet50_fpn_v2(
-        weights_backbone='IMAGENET1K_V1')
+        weights_backbone='IMAGENET1K_V1',
+        trainable_backbone_layers=5)
         #weights="MaskRCNN_ResNet50_FPN_V2_Weights.COCO_V1") 
 
 
@@ -27,7 +28,7 @@ def MaskRCNN(in_channels=5):
     # change input layer
     output_channels = 64
     input_channels = 5
-    model.backbone.body.conv1  = nn.Conv2d(input_channels, output_channels, 7, 2, padding=3, bias=False)
+    model.backbone.body.conv1  = nn.Conv2d(input_channels, output_channels, 7, 2, padding=3, bias=False) 
 
     # change last layer
     mask_predictor_in_channels = 256  # == mask_layers[-1]
@@ -35,6 +36,9 @@ def MaskRCNN(in_channels=5):
     mask_predictor = MaskRCNNPredictor(mask_predictor_in_channels, mask_dim_reduced, 2)
     model.roi_heads.mask_predictor = mask_predictor
 
+    # for name, layer in model.named_modules():
+    #     if (isinstance(layer, nn.Conv2d)):
+    #         layer.requires_grad_(True)
 
     #layers = list(model.children())[:-1]  
     #model = nn.Sequential(*layers)

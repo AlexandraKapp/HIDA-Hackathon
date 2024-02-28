@@ -14,10 +14,61 @@ from model import MaskRCNN
 from model_deeplab import DeepLabV3
 from tqdm import tqdm
 from torchmetrics import JaccardIndex
+from cjm_torchvision_tfms.core import CustomRandomIoUCrop, ResizeMax, PadSquare
+from torchvision import transforms
+from torchvision.tv_tensors import BoundingBoxes, Mask
 
 
 def collate_fn(batch) -> tuple:
     return tuple(zip(*batch))
+
+
+            
+def augment(x, y, device):
+    # crop
+    iou_crop = CustomRandomIoUCrop(min_scale=0.3, 
+                        max_scale=1.0, 
+                        min_aspect_ratio=1.0, 
+                        max_aspect_ratio=1.0, 
+                        sampler_options=[0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0],
+                        trials=40, 
+                        jitter_factor=0.25)
+
+    
+    # Set training image size
+    train_sz_x = 2680
+    train_sz_y = 3370
+    # Create a `ResizeMax` object
+    resize_max = ResizeMax(max_sz=train_sz_y)
+
+    # Create a `PadSquare` object
+    pad_square = PadSquare(shift=True, fill=0)
+    
+    augmented_images = []
+    augmented_targets = []
+    for i in range(0, len(x)):
+        cropped_img, targets = iou_crop(x[i], y[i])
+        resized_img, targets = resize_max(cropped_img, targets)
+        padded_img, targets = pad_square(resized_img, targets)
+
+        # Ensure the padded image is the target size
+        resize = transforms.v2.Resize([train_sz_x, train_sz_y], antialias=True)
+        resized_padded_img, targets = resize(padded_img, targets)
+        
+        #targets = resize(targets)
+        sanitized_img, targets = transforms.v2.SanitizeBoundingBoxes()(resized_padded_img, targets)
+        augmented_images.append(sanitized_img)
+        augmented_targets.append(targets)
+    # # Random color jitter
+    # if torch.rand(1) > 0.2:
+    #     color_transform = transforms.ColorJitter((0.75, 1.25), (0.75, 1.25), (0.75, 1.25), (-0.25, 0.25))  #For PyTorch 1.9/TorchVision 0.10 users
+    #     # color_transform = transforms.ColorJitter.get_params((0.75, 1.25), (0.75, 1.25), (0.75, 1.25), (-0.25, 0.25))
+    #     sanitized_img[:3, :, :] = color_transform(sanitized_img[:3, :, :])
+
+    # # Random Gaussian filter
+    # if torch.rand(1) > 0.5:
+    #     sanitized_img = transforms.GaussianBlur([3,5], (0.15, 1.15))(sanitized_img)
+    return augmented_images, augmented_targets
 
 
 def instance_to_semantic_mask(pred, target):
@@ -84,21 +135,26 @@ def train(hyperparameters: argparse.Namespace):
         for i, batch in enumerate(tqdm(train_loader, desc='train')):
             x, label = batch
 
+
             if deeplab: #2900x3000
-                x=torch.stack(x, dim=0).to(device)[:,:,:256,:1200]
-                label = [{k: v.to(device) for k, v in l.items()} for l in label]
-                label = torch.stack([p['masks'].sum(dim=0).squeeze() for p in label]).long()
+                pass
+            #     x=torch.stack(x, dim=0).to(device)[:,:,:256,:1200]
+            #     label = [{k: v.to(device) for k, v in l.items()} for l in label]
+            #     label = torch.stack([p['masks'].sum(dim=0).squeeze() for p in label]).long()
                 
-                label = label [:, :256, :1200]   # [batch_size, width, height]
-                label = label.to(device)
-                model.zero_grad()
+            #     label = label [:, :256, :1200]   # [batch_size, width, height]
+            #     label = label.to(device)
+            #     model.zero_grad()
             
-                outputs = model(x)
-                loss = nn.CrossEntropyLoss()(outputs['out'], label)
+            #     outputs = model(x)
+            #     loss = nn.CrossEntropyLoss()(outputs['out'], label)
 
             else:
+                x, label = augment(x, label, device)
                 x = list(image.to(device) for image in x)
                 label = [{k: v.to(device) for k, v in l.items()} for l in label]
+                
+
                 model.zero_grad()
                 losses = model(x, label)
                 loss = sum(l for l in losses.values())
@@ -129,6 +185,7 @@ def train(hyperparameters: argparse.Namespace):
         test_metric = test_metric.to(device)
 
         for i, batch in enumerate(tqdm(test_loader, desc='test ')):
+
             x_test, test_label = batch
             x_test = list(image.to(device) for image in x_test)
             test_label = [{k: v.to(device) for k, v in l.items()} for l in test_label]

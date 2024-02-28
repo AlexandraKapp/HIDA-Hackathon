@@ -1,0 +1,9 @@
+checkpoint.pt
+slurm-*
+*ipynb
+lib/*
+include/*
+share/*
+__pycache__/*
+bin/*
+lib64
